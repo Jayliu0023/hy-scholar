@@ -224,7 +224,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
            let draft=try? JSONDecoder().decode(Draft.self,from:d) {manual.restore(draft)}
         wordsPanel.remove = { [weak self] in self?.removeWord($0) }
         wordsPanel.retry = { [weak self] in self?.completeWord($0) }
-        keyMonitor=NSEvent.addLocalMonitorForEvents(matching:[.keyDown,.leftMouseDown,.rightMouseDown,.scrollWheel]) { [weak self] e in
+        keyMonitor=NSEvent.addLocalMonitorForEvents(matching:[.keyDown,.leftMouseDown,.rightMouseDown]) { [weak self] e in
             guard let r=self, e.window === r.window else { return e }
             if (e.type == .rightMouseDown || (e.type == .leftMouseDown && e.modifierFlags.contains(.control))) && r.popupSelection(e) {return nil}
             if e.type == .keyDown && e.keyCode==48 && e.modifierFlags.contains(.control) && !r.tabs.isEmpty {
@@ -232,10 +232,9 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                 return nil
             }
             if e.type == .keyDown && e.keyCode==53 && r.bubble.superview != nil { r.dismissBubble(); return nil }
-            if r.bubble.superview != nil && (e.type == .leftMouseDown || e.type == .scrollWheel) {
-                let point=r.bubble.convert(e.locationInWindow,from:nil)
-                let pagePoint=r.pageHost.convert(e.locationInWindow,from:nil)
-                if !r.bubble.bounds.contains(point) && r.pageHost.bounds.contains(pagePoint) { r.dismissBubble() }
+            if e.type == .leftMouseDown, r.bubble.superview != nil || r.pending != nil,
+               r.isDocumentClick(at:e.locationInWindow) {
+                r.dismissBubble()
             }
             return e
         }
@@ -374,7 +373,10 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             }
         }
         if let old=activeTab,let view=old.pdf {old.position=PagePosition(view) ?? old.position}
-        clear(); draggedTop=nil
+        // A tab click leaves the visible translation, including its stream, on screen.
+        resetSelectionTracking()
+        translatedRanges=[]
+        if bubble.superview == nil { draggedTop=nil }
         activeTab?.view?.isHidden=true; empty.isHidden=true; activeTab=tab
         let view=tab.view!
         if firstVisit {fill(view,in:pageHost)}
@@ -422,26 +424,29 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     }
     func selected(_ raw:String,_ rect:NSRect) {
         let text=raw.replacingOccurrences(of:"\\s+",with:" ",options:.regularExpression).trimmingCharacters(in:.whitespacesAndNewlines)
-        let excerpt = !text.isEmpty && text.count<=120 ? currentExcerpt : nil
-        let ranges = excerpt?.spans ?? []
-        if text == lastNotified && ranges==lastRanges && !text.isEmpty { return }
-        lastNotified=text; lastRanges=ranges; pending?.cancel(); engine.cancel("follow"); revision += 1
         guard text.rangeOfCharacter(from:.letters) != nil,
               !text.lowercased().hasPrefix("https://"), !text.lowercased().hasPrefix("http://"),
               text.range(of:"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",options:.regularExpression)==nil else {
-            bubble.removeFromSuperview()
-            if busy { source=""; result=""; busy=false; failed=false; paint() }
+            // PDFKit can clear its selection during focus and viewport changes.
+            resetSelectionTracking()
             return
         }
-        let version=revision
+        let excerpt = text.count<=120 ? currentExcerpt : nil
+        let ranges = excerpt?.spans ?? []
+        if text == lastNotified && ranges==lastRanges {return}
+        pending?.cancel(); lastNotified=text; lastRanges=ranges
+        let documentID=entry?.id
         func schedule() {
             let task=DispatchWorkItem { [weak self] in
-                guard let self, self.revision==version else { return }
+                guard let self, self.entry?.id==documentID else { return }
                 if NSEvent.pressedMouseButtons & 1 != 0 { schedule(); return }
+                self.pending=nil
+                self.revision += 1
+                let version=self.revision
                 self.translatedRanges=ranges
                 self.source=text; self.anchor=rect; self.result=""; self.busy=true; self.failed=false
                 self.placeBubble()
-                if text.count > 5000 { self.busy=false; self.failed=true; self.result="选区超过 5,000 字符，请分段划选。" }
+                if text.count > 5000 { self.engine.cancel("follow"); self.busy=false; self.failed=true; self.result="选区超过 5,000 字符，请分段划选。" }
                 self.paint()
                 if !self.failed {
                     let context=excerpt?.text==text ? excerpt?.termContext ?? "" : ""
@@ -473,8 +478,25 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         bubble.frame=NSRect(x:x,y:y,width:w,height:h)
         if bubble.superview == nil { canvas.addSubview(bubble,positioned:.above,relativeTo:pageHost) }
     }
+    private func isDocumentClick(at windowPoint:NSPoint)->Bool {
+        guard let surface=activeTab?.view, let parent=canvas.superview,
+              let hit=canvas.hitTest(parent.convert(windowPoint,from:nil)),
+              hit.isDescendant(of:surface) else {return false}
+        var node:NSView?=hit
+        while let view=node, view !== surface {
+            if view is NSScroller {return false}
+            node=view.superview
+        }
+        guard let pdf else {return true}
+        let point=pdf.convert(windowPoint,from:nil)
+        guard let page=pdf.page(for:point,nearest:false) else {return false}
+        return page.bounds(for:pdf.displayBox).contains(pdf.convert(point,to:page))
+    }
+    private func resetSelectionTracking() {
+        pending?.cancel(); pending=nil; lastNotified=""; lastRanges=[]
+    }
     private func clear() {
-        revision += 1; pending?.cancel(); engine.cancel("follow"); lastNotified=""; lastRanges=[]; translatedRanges=[]; source=""; result=""; busy=false; failed=false
+        revision += 1; resetSelectionTracking(); engine.cancel("follow"); translatedRanges=[]; source=""; result=""; busy=false; failed=false
         bubble.removeFromSuperview(); paint()
     }
     func dismissBubble() {
@@ -520,7 +542,6 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     func splitView(_ splitView:NSSplitView,constrainMaxCoordinate proposedMaximumPosition:CGFloat,ofSubviewAt offset:Int)->CGFloat { splitView.bounds.width-275 }
     func splitView(_ splitView:NSSplitView,shouldAdjustSizeOfSubview view:NSView)->Bool { view === canvas }
     func windowDidResize(_ notification:Notification) { if bubble.superview != nil { placeBubble() } }
-    func windowDidResignKey(_ notification:Notification) { dismissBubble() }
     func stop() {
         if let keyMonitor {NSEvent.removeMonitor(keyMonitor); self.keyMonitor=nil}
         saveSession(); saveDraft(); pending?.cancel(); engine.stop(); terminal?.stop()

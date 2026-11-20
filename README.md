@@ -11,7 +11,7 @@ Read a paper on your Mac and select a term or sentence to see a Simplified Chine
 | 中文 | English |
 | --- | --- |
 | 一次打开多篇文献，在标签间切换。重新启动时恢复标签及 PDF 阅读位置。 | Open several papers in tabs. Reopening the app restores the session and PDF reading positions. |
-| 双击单词或拖选句子，在可拖动的浮窗里看流式译文。术语翻译参考所在原句。 | Double-click a word or select a passage for a streaming translation. Drag the pop-up by its title bar. Short terms use the surrounding sentence for context. |
+| 双击单词或拖选句子，在可拖动的浮窗里看流式译文。滚动和操作侧栏或标签栏时译文保留，单击文献页面即可收起。术语翻译参考所在原句。 | Double-click a word or select a passage for a streaming translation. The pop-up stays visible while you scroll or use the sidebar and tabs. Click the document page to dismiss it, or drag the title bar to move it. Short terms use the surrounding sentence for context. |
 | 点「翻译」打开独立侧栏，编辑或粘贴原文。切换文献时保留草稿。 | Open **翻译** to edit or paste your own text in the sidebar. Its draft stays in place while you read other tabs. |
 | 在 PDF 或 Markdown 选区上右键，可高亮、加下划线、加删除线或收藏词汇。词汇栏显示释义和例句，模型补写的例句有单独标识。 | Right-click a selection to highlight, underline, strike through or save vocabulary. Each saved entry pairs its translation with an example. Generated examples are labeled. |
 | 点「终端」打开本机交互式 shell。切换侧栏时保留会话。 | Open **终端** for a local interactive shell. Switching sidebar panels keeps the session alive. |

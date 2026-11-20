@@ -37,7 +37,6 @@ extension Reader {
             do {
                 try notes.mark(MarkKind(rawValue:choice.action),ranges:choice.passage.spans,document:choice.document)
                 redrawMarks()
-                dismissBubble()
             } catch { noteError(error) }
         }
     }
