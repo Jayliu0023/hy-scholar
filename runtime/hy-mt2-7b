@@ -1,0 +1,131 @@
+#!/usr/bin/python3
+"""Translate scientific text locally with Tencent Hy-MT2-7B and llama.cpp."""
+import argparse
+import contextlib
+import http.client
+import json
+from pathlib import Path
+import resource
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parent
+MODEL = ROOT / "Hy-MT2-7B-Q4_K_M.gguf"
+SERVER = ROOT / "llama-b11457" / "llama-server"
+
+
+class LocalConnection(http.client.HTTPConnection):
+    def __init__(self, socket_path, timeout):
+        super().__init__("localhost", timeout=timeout)
+        self.socket_path = str(socket_path)
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.socket_path)
+
+
+def request(path, route, payload=None, timeout=1200):
+    with contextlib.closing(LocalConnection(path, timeout)) as connection:
+        body = json.dumps(payload).encode() if payload is not None else None
+        connection.request("POST" if body else "GET", route, body,
+                           {"Content-Type": "application/json"})
+        response = connection.getresponse()
+        return response.status, json.loads(response.read())
+
+
+@contextlib.contextmanager
+def engine():
+    with tempfile.TemporaryDirectory(prefix="hy-mt-", dir="/tmp") as directory:
+        path = Path(directory) / "translate.sock"
+        command = [str(SERVER), "--offline", "--no-webui", "--host", str(path),
+                   "-m", str(MODEL), "-ngl", "all", "-c", "8192", "-np", "1",
+                   "--jinja", "--no-context-shift"]
+        with tempfile.TemporaryFile() as log:
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
+                                       stdout=log, stderr=log)
+            try:
+                deadline = time.monotonic() + 180
+                while time.monotonic() < deadline:
+                    if process.poll() is not None:
+                        log.seek(0)
+                        raise RuntimeError(log.read().decode(errors="replace")[-2000:])
+                    try:
+                        if request(path, "/health", timeout=2)[0] == 200:
+                            break
+                    except (FileNotFoundError, ConnectionError, TimeoutError):
+                        pass
+                    time.sleep(0.1)
+                else:
+                    raise RuntimeError("模型启动超时")
+                yield path
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="离线翻译科研文本。默认英语译简体中文。")
+    parser.add_argument("file", nargs="?", type=Path, help="UTF-8 纯文本文件，省略时从标准输入读取")
+    parser.add_argument("--to", choices=["zh", "en"], default="zh", help="目标语言，默认 zh")
+    parser.add_argument("--glossary", type=Path, help="UTF-8 术语表，每行一对，例如 cryo-EM = 冷冻电镜")
+    parser.add_argument("--stats", action="store_true", help="将耗时、生成速度和峰值 RSS 写入标准错误")
+    args = parser.parse_args()
+    if not args.file and sys.stdin.isatty():
+        parser.error("请给出文本文件，或通过管道输入原文")
+    source = (args.file.read_text(encoding="utf-8-sig") if args.file else sys.stdin.read()).strip()
+    if not source:
+        parser.error("原文为空")
+    language = "简体中文" if args.to == "zh" else "英语"
+    glossary = ""
+    if args.glossary:
+        glossary = "请采用以下术语对应关系：\n" + args.glossary.read_text(encoding="utf-8-sig").strip() + "\n\n"
+    abbreviations = list(dict.fromkeys(
+        word for word in re.findall(r"[（(]([a-zA-Z][a-zA-Z0-9./+-]{1,30})[)）]", source)
+        if any(c.isupper() for c in word)
+    ))
+    preserve = ("译文中必须原样出现以下括号缩写：" + "、".join(abbreviations) + "。") if abbreviations else ""
+    prompt = (f"{glossary}请将以下科研文本逐句准确翻译成{language}。保留段落、研究变量、数值和单位。"
+              "所有括号中的缩写必须原样保留在对应译名后。准确表达相关性、否定和不确定性，"
+              f"保持作者的证据强度，不增加因果推断。{preserve}只输出译文。\n\n" + source)
+    if not MODEL.is_file():
+        raise RuntimeError(f"找不到模型文件 {MODEL}")
+    begin = time.monotonic()
+    with engine() as path:
+        code, data = request(path, "/v1/chat/completions", {
+            "model": "local", "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.7, "top_p": 0.6, "top_k": 20, "repeat_penalty": 1.05,
+            "seed": 42, "max_tokens": 4096, "stream": False,
+        })
+        if code != 200:
+            raise RuntimeError(str(data.get("error", data)) + "；篇幅过长时请分段。")
+        choice = data["choices"][0]
+        if choice["finish_reason"] != "stop":
+            raise RuntimeError("生成未完成，请将原文分成较短的段落重试。")
+        translated = choice["message"]["content"].strip()
+        if not translated:
+            raise RuntimeError("模型返回空译文")
+    print(translated)
+    if args.stats:
+        stats = {"wall_seconds": round(time.monotonic()-begin, 3),
+                 "peak_rss_bytes": resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
+                 "usage": data.get("usage"), "timings": data.get("timings")}
+        print(json.dumps(stats, ensure_ascii=False), file=sys.stderr)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, ValueError, http.client.HTTPException) as error:
+        sys.exit(str(error))
+    except KeyboardInterrupt:
+        sys.exit(130)
