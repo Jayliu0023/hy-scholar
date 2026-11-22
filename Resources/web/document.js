@@ -1,6 +1,6 @@
 let documentID = "";
 function renderPaper(text, id, marks) {
-  documentID = id;
+  documentID = id; marginSpec={notes:[],regions:[]};
   const fragment = DOMPurify.sanitize(marked.parse(text), {
     RETURN_DOM_FRAGMENT: true, ALLOW_DATA_ATTR: false, USE_PROFILES: {html:true},
     FORBID_TAGS: ['form','input','button','video','audio','style','base','meta','link'],
@@ -43,6 +43,7 @@ function textNodes(root) {
 }
 function applyMarks(id,marks) {
   if (id!==documentID) return;
+  marginMarks=marks;textIndex=null;queueMarginGeometry();
   const root=document.getElementById('paper'), selected=currentExcerpt();
   for(const el of root.querySelectorAll('[data-wy-mark]')) el.replaceWith(...el.childNodes);
   root.normalize();

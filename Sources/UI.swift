@@ -137,7 +137,7 @@ final class DropWindow: NSWindow, NSDraggingDestination {
 }
 
 final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
-    enum Side { case none, translation, words, terminal }
+    enum Side { case none, translation, words, notes, terminal }
     let window: DropWindow, library: Library
     let tabBar = DocumentTabBar()
     private var tabHeight:NSLayoutConstraint!
@@ -149,11 +149,12 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     let canvas = NSView(), pageHost = NSView(), split = NSSplitView(), sideHost = NSView()
     let empty = NSView(), manual=ManualPanel(), bubble=Card(), wordsPanel=WordPanel()
     let notes:ReadingNotes
+    lazy var margins=MarginController(self)
     var pendingWords=Set<String>(), wordErrors=[String:String]()
     private var draggedTop:NSPoint?
     let metadata = label("",11)
     let engine = Translator()
-    private var translateButton: NSButton!, terminalButton: NSButton!, wordsButton:NSButton!
+    private var translateButton: NSButton!, terminalButton: NSButton!, wordsButton:NSButton!, notesButton:NSButton!
     private(set) var terminal: TerminalPane?
     private(set) var side: Side = .none
     private(set) var source = "", result = "", busy = false, failed = false
@@ -179,9 +180,10 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         let openButton=control("打开","folder","打开 PDF 或 Markdown（⌘O）",self,#selector(choose))
         translateButton=control("翻译","text.cursor","独立翻译",self,#selector(toggleTranslation))
         wordsButton=control("收藏","star","收藏词汇",self,#selector(toggleWords))
+        notesButton=control("Note","note.text","文献笔记 · Shift＋空格拖动框选",self,#selector(toggleNotes))
         terminalButton=control("终端","terminal","右侧终端（⌃\u{60}）",self,#selector(toggleTerminal))
         metadata.textColor = .secondaryLabelColor
-        let toolbar=row([openButton,metadata,NSView(),translateButton,wordsButton,terminalButton],spacing:12)
+        let toolbar=row([openButton,metadata,NSView(),translateButton,wordsButton,notesButton,terminalButton],spacing:12)
         toolbar.edgeInsets=NSEdgeInsets(top:0,left:14,bottom:0,right:14)
         toolbar.translatesAutoresizingMaskIntoConstraints=false; root.addSubview(toolbar)
         tabBar.translatesAutoresizingMaskIntoConstraints=false; root.addSubview(tabBar)
@@ -204,6 +206,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         empty.addSubview(intro); intro.translatesAutoresizingMaskIntoConstraints=false
         NSLayoutConstraint.activate([intro.centerXAnchor.constraint(equalTo:empty.centerXAnchor),intro.centerYAnchor.constraint(equalTo:empty.centerYAnchor,constant:-14)])
         fill(empty,in:pageHost)
+        margins.install(in:root)
         NotificationCenter.default.addObserver(self,selector:#selector(pdfSelection(_:)),name:.PDFViewSelectionChanged,object:nil)
         NotificationCenter.default.addObserver(self,selector:#selector(pdfPageChanged(_:)),name:.PDFViewPageChanged,object:nil)
         bubble.head.drag = { [weak self] dx,dy in
@@ -224,8 +227,9 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
            let draft=try? JSONDecoder().decode(Draft.self,from:d) {manual.restore(draft)}
         wordsPanel.remove = { [weak self] in self?.removeWord($0) }
         wordsPanel.retry = { [weak self] in self?.completeWord($0) }
-        keyMonitor=NSEvent.addLocalMonitorForEvents(matching:[.keyDown,.leftMouseDown,.rightMouseDown]) { [weak self] e in
+        keyMonitor=NSEvent.addLocalMonitorForEvents(matching:[.keyDown,.keyUp,.flagsChanged,.leftMouseDown,.leftMouseDragged,.leftMouseUp,.rightMouseDown]) { [weak self] e in
             guard let r=self, e.window === r.window else { return e }
+            if r.margins.handle(e) {return nil}
             if (e.type == .rightMouseDown || (e.type == .leftMouseDown && e.modifierFlags.contains(.control))) && r.popupSelection(e) {return nil}
             if e.type == .keyDown && e.keyCode==48 && e.modifierFlags.contains(.control) && !r.tabs.isEmpty {
                 r.stepTab(e.modifierFlags.contains(.shift) ? -1 : 1)
@@ -348,7 +352,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             let next=min(index,tabs.count-1)
             do {try activate(tabs[next]); return} catch {tabs.remove(at:next)}
         }
-        clear(); activeTab=nil; draggedTop=nil
+        clear(); activeTab=nil; draggedTop=nil; margins.bind()
         empty.isHidden=false; metadata.stringValue=""; window.title="文译阅读器"
     }
     private func activate(_ tab:ReadingTab) throws {
@@ -377,6 +381,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         resetSelectionTracking()
         translatedRanges=[]
         if bubble.superview == nil { draggedTop=nil }
+        margins.detach()
         activeTab?.view?.isHidden=true; empty.isHidden=true; activeTab=tab
         let view=tab.view!
         if firstVisit {fill(view,in:pageHost)}
@@ -399,6 +404,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         } else {metadata.stringValue="Markdown"}
         window.title=tab.entry.name+" · 文译阅读器"
         window.makeFirstResponder(view)
+        margins.bind()
     }
     private func problem(_ msg:String)->NSError { NSError(domain:"Wenyi",code:1,userInfo:[NSLocalizedDescriptionKey:msg]) }
     private func alert(_ message:String) { let a=NSAlert(); a.messageText="无法打开文献"; a.informativeText=message; a.beginSheetModal(for:window) }
@@ -478,7 +484,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         bubble.frame=NSRect(x:x,y:y,width:w,height:h)
         if bubble.superview == nil { canvas.addSubview(bubble,positioned:.above,relativeTo:pageHost) }
     }
-    private func isDocumentClick(at windowPoint:NSPoint)->Bool {
+    func isDocumentClick(at windowPoint:NSPoint)->Bool {
         guard let surface=activeTab?.view, let parent=canvas.superview,
               let hit=canvas.hitTest(parent.convert(windowPoint,from:nil)),
               hit.isDescendant(of:surface) else {return false}
@@ -504,6 +510,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     }
     @objc func toggleTranslation() { setSide(side == .translation ? .none : .translation) }
     @objc func toggleWords() { setSide(side == .words ? .none : .words) }
+    @objc func toggleNotes() { setSide(side == .notes ? .none : .notes) }
     @objc func toggleTerminal() { setSide(side == .terminal ? .none : .terminal) }
     func setSide(_ next:Side) {
         if side != .none && sideHost.frame.width>=240 { sidebarWidth=sideHost.frame.width }
@@ -520,6 +527,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                 split.setPosition(left,ofDividerAt:0)
             }
             if next == .translation { fill(manual,in:sideHost) }
+            else if next == .notes {fill(margins.panel,in:sideHost)}
             else if next == .words {
                 fill(wordsPanel,in:sideHost); refreshWords()
                 for word in notes.data.words where wordErrors[word.id] == nil && (word.meaning.isEmpty || word.example.isEmpty) {completeWord(word.id)}
@@ -534,15 +542,19 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         }
         translateButton.contentTintColor=next == .translation ? accent:nil
         wordsButton.contentTintColor=next == .words ? accent:nil
+        notesButton.contentTintColor=next == .notes ? accent:nil
         terminalButton.contentTintColor=next == .terminal ? accent:nil
         split.adjustSubviews()
+        margins.invalidate()
         if bubble.superview != nil {placeBubble()}
     }
     func splitView(_ splitView:NSSplitView,constrainMinCoordinate proposedMinimumPosition:CGFloat,ofSubviewAt offset:Int)->CGFloat { max(340,splitView.bounds.width-720) }
     func splitView(_ splitView:NSSplitView,constrainMaxCoordinate proposedMaximumPosition:CGFloat,ofSubviewAt offset:Int)->CGFloat { splitView.bounds.width-275 }
     func splitView(_ splitView:NSSplitView,shouldAdjustSizeOfSubview view:NSView)->Bool { view === canvas }
-    func windowDidResize(_ notification:Notification) { if bubble.superview != nil { placeBubble() } }
+    func windowDidResize(_ notification:Notification) { margins.invalidate(); if bubble.superview != nil { placeBubble() } }
+    func windowDidResignKey(_ notification:Notification) {margins.cancelGesture()}
     func stop() {
+        margins.detach()
         if let keyMonitor {NSEvent.removeMonitor(keyMonitor); self.keyMonitor=nil}
         saveSession(); saveDraft(); pending?.cancel(); engine.stop(); terminal?.stop()
     }

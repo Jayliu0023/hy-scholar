@@ -14,11 +14,17 @@ Read a paper on your Mac and select a term or sentence to see a Simplified Chine
 | 双击单词或拖选句子，在可拖动的浮窗里看流式译文。滚动和操作侧栏或标签栏时译文保留，单击文献页面即可收起。术语翻译参考所在原句。 | Double-click a word or select a passage for a streaming translation. The pop-up stays visible while you scroll or use the sidebar and tabs. Click the document page to dismiss it, or drag the title bar to move it. Short terms use the surrounding sentence for context. |
 | 点「翻译」打开独立侧栏，编辑或粘贴原文。切换文献时保留草稿。 | Open **翻译** to edit or paste your own text in the sidebar. Its draft stays in place while you read other tabs. |
 | 在 PDF 或 Markdown 选区上右键，可高亮、加下划线、加删除线或收藏词汇。词汇栏显示释义和例句，模型补写的例句有单独标识。 | Right-click a selection to highlight, underline, strike through or save vocabulary. Each saved entry pairs its translation with an example. Generated examples are labeled. |
+| 点「Note」打开笔记侧栏。正文选区或已有高亮、下划线、删除线可右键「添加 Note」。卡片按正文顺序排列，随输入自动增高，并用可改色的虚线关联正文。 | Open **Note** for document notes. Right-click selected body text or an existing highlight, underline or strike-through to add a note. Cards follow document order, grow with their content and connect to the passage with a configurable dashed line. |
+| 按住 `Shift＋空格`，在正文拖出虚线矩形；右键矩形可添加 Note 或修改框线颜色。 | Hold `Shift+Space` and drag over the document to draw a dashed rectangle. Right-click it to add a note or change its border color. |
 | 点「终端」打开本机交互式 shell。切换侧栏时保留会话。 | Open **终端** for a local interactive shell. Switching sidebar panels keeps the session alive. |
 
 PDF 划词需要可选择的文本层。首次翻译会加载模型。阅读器将文献副本、标记、收藏和草稿保存在 `~/Library/Application Support/文译阅读器/`。
 
 PDF selection requires a text layer. The model loads on the first translation. Imported documents, annotations, saved words and drafts are stored under `~/Library/Application Support/文译阅读器/`.
+
+笔记和框选按文献自动保存到上述目录的 `document-notes/`。点笔记卡片的引文可定位正文；卡片右上角调整连线颜色。框选可用于没有文本层的区域，PDF 中每个框限定在一页内。`Esc` 取消正在进行的框选，侧栏输入时不触发框选快捷键。翻译浮窗中的文字沿用原来的选择与复制行为。
+
+Notes and regions are saved per document in `document-notes/` under the same directory. Click a card's quote to locate its source, or use its color selector to change the connector. Regions also work without selectable text; each PDF region stays within one page. Press `Esc` to cancel a drag. The shortcut leaves sidebar typing alone. Translation pop-up text keeps its existing selection and copy behavior.
 
 ## 安装 · Installation
 
@@ -73,6 +79,14 @@ open "$PWD/build/文译阅读器.app"
 | 下一个 / 上一个标签页 · Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | 关闭当前标签 / Close the current tab | `⌘W` |
 | 翻译侧栏输入的文字 / Translate the sidebar draft | `⌘Return` |
+| 拖动框选正文区域 / Drag a region in the document | Hold `Shift+Space` |
+| 取消框选 / Cancel region selection | `Esc` |
+
+Note 功能回归检查（使用临时文献库，不修改个人阅读数据） / Note regression check (uses an isolated library):
+
+```sh
+Tests/run-notes.sh "$PWD/work/notes-test"
+```
 
 ## 依赖与许可 · Dependencies and notices
 

@@ -31,6 +31,7 @@ final class App: NSObject, NSApplicationDelegate {
         let view=submenu("显示")
         add(view,"独立翻译",#selector(Reader.toggleTranslation),"",reader)
         add(view,"收藏词汇",#selector(Reader.toggleWords),"",reader)
+        add(view,"Note 笔记",#selector(Reader.toggleNotes),"",reader)
         let trm=view.addItem(withTitle:"右侧终端",action:#selector(Reader.toggleTerminal),keyEquivalent:"\u{60}")
         trm.keyEquivalentModifierMask=[.control]; trm.target=reader
         let next=view.addItem(withTitle:"下一个标签页",action:#selector(Reader.nextTab),keyEquivalent:"\t")

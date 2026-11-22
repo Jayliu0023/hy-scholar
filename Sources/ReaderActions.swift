@@ -12,6 +12,7 @@ extension Reader {
             menu.addItem(item)
         }
         add("复制",#selector(contextAction(_:)),"copy")
+        add("添加 Note",#selector(contextAction(_:)),"note")
         let saved=notes.data.words.contains { sameTerm($0.term,passage.text) }
         add(saved ? "查看已收藏词汇" : "收藏词汇",#selector(contextAction(_:)),"star")
         menu.addItem(.separator())
@@ -23,7 +24,20 @@ extension Reader {
         let pos=pageHost.convert(event.locationInWindow,from:nil)
         guard pageHost.bounds.contains(pos),entry != nil else {return false}
         if bubble.superview != nil, bubble.bounds.contains(bubble.convert(event.locationInWindow,from:nil)) {return false}
-        guard let sel=currentExcerpt,!sel.text.isEmpty else {return false}
+        if let box=margins.boxAt(event.locationInWindow) {
+            NSMenu.popUpContextMenu(margins.boxMenu(box),with:event,for:pageHost);return true
+        }
+        let marked=margins.markedExcerpt(at:event.locationInWindow)
+        let selected=currentExcerpt
+        let sel:Excerpt?
+        if let pdf,let selection=pdf.currentSelection {
+            let point=pdf.convert(event.locationInWindow,from:nil)
+            let contains=selection.selectionsByLine().contains { line in
+                line.pages.contains {pdf.convert(line.bounds(for:$0),from:$0).contains(point)}
+            }
+            sel=contains ? selected : marked
+        } else {sel=marked ?? selected}
+        guard let sel,!sel.text.isEmpty else {return false}
         NSMenu.popUpContextMenu(selectionMenu(for:sel), with:event, for:pageHost)
         return true
     }
@@ -33,6 +47,7 @@ extension Reader {
         case "copy":
             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(choice.passage.text,forType:.string)
         case "star": saveWord(choice.passage)
+        case "note": dismissBubble();margins.addText(choice.passage)
         default:
             do {
                 try notes.mark(MarkKind(rawValue:choice.action),ranges:choice.passage.spans,document:choice.document)

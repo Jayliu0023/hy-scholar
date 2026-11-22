@@ -52,9 +52,11 @@ final class MarkdownPane {
     var selection: ((String, NSRect) -> Void)?
     private(set) var excerpt:Excerpt?
     private var marks:[TextMark]=[]
-    private var rendered = false
+    var notebook=Notebook(), geometry=WebNoteGeometry()
+    var onGeometry:(()->Void)?
+    private(set) var rendered = false
     private var text = ""
-    private var revision = UUID().uuidString
+    private(set) var revision = UUID().uuidString
 
     init() {
         let cfg = WKWebViewConfiguration()
@@ -72,12 +74,13 @@ final class MarkdownPane {
             } else { self.excerpt=nil }
             self.selection?(text, rect)
         }, name: "selection")
+        cfg.userContentController.add(MessageLink { [weak self] msg in self?.receiveGeometry(msg.body) },name:"marginGeometry")
         nav.ready = { [weak self] in self?.rendered = true; self?.render() }
         web.navigationDelegate = nav
         web.loadFileURL(resources.appendingPathComponent(nav.page), allowingReadAccessTo: resources)
     }
     func set(_ content: String, directory: URL, marks:[TextMark]) {
-        excerpt=nil; self.marks=marks
+        excerpt=nil; geometry=WebNoteGeometry(); self.marks=marks
         revision = UUID().uuidString; text = content; images.directory = directory; render()
     }
     private var markData:[[String:Any]] { marks.map { ["kind":$0.kind.rawValue,"span":["start":$0.span.start,"length":$0.span.length]] } }
@@ -87,7 +90,7 @@ final class MarkdownPane {
     }
     private func render() {
         guard rendered else { return }
-        web.callAsyncJavaScript("renderPaper(text,id,marks)", arguments:["text":text,"id":revision,"marks":markData], in:nil, in:.page) { _ in }
+        web.callAsyncJavaScript("renderPaper(text,id,marks)", arguments:["text":text,"id":revision,"marks":markData], in:nil, in:.page) { [weak self] _ in self?.pushNotebook() }
     }
 }
 
