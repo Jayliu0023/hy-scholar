@@ -13,7 +13,7 @@ Read a paper on your Mac and select a term or sentence to see a Simplified Chine
 | 一次打开多篇文献，在标签间切换。重新启动时恢复标签及 PDF 阅读位置。 | Open several papers in tabs. Reopening the app restores the session and PDF reading positions. |
 | 双击单词或拖选句子，在可拖动的浮窗里看流式译文。滚动和操作侧栏或标签栏时译文保留，单击文献页面即可收起。术语翻译参考所在原句。 | Double-click a word or select a passage for a streaming translation. The pop-up stays visible while you scroll or use the sidebar and tabs. Click the document page to dismiss it, or drag the title bar to move it. Short terms use the surrounding sentence for context. |
 | 按 `⌘F` 搜索当前 PDF 或 Markdown，查看匹配高亮和结果数量。用 Return / Shift+Return 或 `⌘G` / `⌘Shift+G` 切换结果，Esc 关闭。 | Press `⌘F` to search the current PDF or Markdown, with highlighted matches and a result count. Use Return / Shift+Return or `⌘G` / `⌘Shift+G` to navigate, and Esc to close. |
-| 左上角「书签」按钮可添加当前位置、查看书签并点击跳转。PDF 按页去重，书签按文献自动保存。 | The **书签** button at the top left saves the current reading position and opens a list for quick jumps. PDF bookmarks are unique per page and saved per document. |
+| 左侧固定侧边栏默认显示「目录」标签，顶部「书签」按钮可展开或收起：PDF 读取内置章节大纲，Markdown 按标题层级生成，点击章节跳转。「我的书签」是次级入口，可添加、跳转和删除手动书签。 | A persistent left sidebar opens the **目录** tab by default; the top **书签** button shows or hides it. It displays: embedded PDF sections or Markdown headings. Click a chapter to jump. The secondary **我的书签** tab adds, opens and removes personal bookmarks. |
 | 点「翻译」打开独立侧栏，编辑或粘贴原文。切换文献时保留草稿。 | Open **翻译** to edit or paste your own text in the sidebar. Its draft stays in place while you read other tabs. |
 | 在 PDF 或 Markdown 选区上右键，可高亮、加下划线、加删除线或收藏词汇。词汇栏显示释义和例句，模型补写的例句有单独标识。 | Right-click a selection to highlight, underline, strike through or save vocabulary. Each saved entry pairs its translation with an example. Generated examples are labeled. |
 | 点「Note」打开笔记侧栏。正文选区或已有高亮、下划线、删除线可右键「添加 Note」。卡片按正文顺序排列，随输入自动增高，并用可改色的虚线关联正文。 | Open **Note** for document notes. Right-click selected body text or an existing highlight, underline or strike-through to add a note. Cards follow document order, grow with their content and connect to the passage with a configurable dashed line. |
@@ -23,6 +23,8 @@ Read a paper on your Mac and select a term or sentence to see a Simplified Chine
 PDF 划词需要可选择的文本层。首次翻译会加载模型。阅读器将文献副本、标记、收藏和草稿保存在 `~/Library/Application Support/文译阅读器/`。
 
 PDF selection requires a text layer. The model loads on the first translation. Imported documents, annotations, saved words and drafts are stored under `~/Library/Application Support/文译阅读器/`.
+
+未内置目录的 PDF 会显示提示；Markdown 需要使用标题语法。
 
 为兼容旧版，应用改名后继续使用上述原有数据目录。书签保存在 `bookmarks/`，笔记和框选按文献自动保存到 `document-notes/`。点笔记卡片的引文可定位正文；卡片右上角调整连线颜色。框选可用于没有文本层的区域，PDF 中每个框限定在一页内。`Esc` 取消正在进行的框选，侧栏输入时不触发框选快捷键。翻译浮窗中的文字沿用原来的选择与复制行为。
 

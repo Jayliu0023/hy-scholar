@@ -27,7 +27,7 @@ final class MarginController:NSObject {
         panel.remove={ [weak self] id in self?.deleteNote(id) }
     }
     func install(in root:NSView){
-        root.addSubview(overlay,positioned:.above,relativeTo:reader.split); overlay.translatesAutoresizingMaskIntoConstraints=false
+        root.addSubview(overlay,positioned:.above,relativeTo:reader.navigationSplit); overlay.translatesAutoresizingMaskIntoConstraints=false
         let split=reader.split
         NSLayoutConstraint.activate([overlay.leadingAnchor.constraint(equalTo:split.leadingAnchor),overlay.trailingAnchor.constraint(equalTo:split.trailingAnchor),
             overlay.topAnchor.constraint(equalTo:split.topAnchor),overlay.bottomAnchor.constraint(equalTo:split.bottomAnchor)])

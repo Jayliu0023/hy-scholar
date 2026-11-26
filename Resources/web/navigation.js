@@ -39,3 +39,15 @@ function revealBookmark(id,point) {
   if(id!==documentID)return;
   const target=viewportPoint(point);window.scrollBy(0,target.y-Math.min(80,innerHeight/4));
 }
+function documentOutline(id) {
+  if(id!==documentID)return [];
+  return [...paper().querySelectorAll('h1,h2,h3,h4,h5,h6')].map(heading=>({
+    title:heading.textContent.replace(/\s+/g,' ').trim(),
+    level:Number(heading.tagName.slice(1)),start:offsetIn(paper(),heading,0)
+  })).filter(heading=>heading.title);
+}
+function revealOutline(id,start) {
+  if(id!==documentID)return;
+  const rect=rangeAt({start,length:1})?.getBoundingClientRect();
+  if(rect)window.scrollBy(0,rect.top-40);
+}

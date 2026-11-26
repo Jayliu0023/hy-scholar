@@ -62,14 +62,19 @@ private final class BookmarkRow:NSView {
 private final class BookmarkListView:NSView {override var isFlipped:Bool{true}}
 final class BookmarkPanel:NSViewController {
     let add=NSButton(title:"添加当前位置",target:nil,action:nil)
+    let tabs=NSSegmentedControl(labels:["目录","我的书签"],trackingMode:.selectOne,target:nil,action:nil)
+    let directory=OutlineList()
+    private let bookmarkView=NSView(),content=NSView()
     private let list=NSStackView(),empty=label("还没有书签",13)
     var create:(()->Void)?, jump:((String)->Void)?, remove:((String)->Void)?
     override func loadView() {
-        view=NSView(frame:NSRect(x:0,y:0,width:300,height:350))
-        let heading=label("书签",15,.semibold)
+        view=NSView(frame:NSRect(x:0,y:0,width:360,height:480))
+        let heading=label("书签与目录",15,.semibold)
         add.bezelStyle = .rounded;add.image=NSImage(systemSymbolName:"bookmark.badge.plus",accessibilityDescription:nil)
         add.target=self;add.action = #selector(createNow)
-        let head=row([heading,NSView(),add])
+        let head=row([heading,NSView()])
+        tabs.target=self;tabs.action = #selector(selectTab);tabs.selectedSegment=0
+        tabs.setAccessibilityLabel("目录与我的书签")
         let scroll=NSScrollView();scroll.drawsBackground=false;scroll.hasVerticalScroller=true;scroll.autohidesScrollers=true
         list.orientation = .vertical;list.alignment = .leading;list.spacing=2;list.translatesAutoresizingMaskIntoConstraints=false
         let container=BookmarkListView();scroll.documentView=container;container.translatesAutoresizingMaskIntoConstraints=false
@@ -77,11 +82,18 @@ final class BookmarkPanel:NSViewController {
         NSLayoutConstraint.activate([container.widthAnchor.constraint(equalTo:scroll.contentView.widthAnchor),
             list.leadingAnchor.constraint(equalTo:container.leadingAnchor),list.trailingAnchor.constraint(equalTo:container.trailingAnchor),
             list.topAnchor.constraint(equalTo:container.topAnchor),list.bottomAnchor.constraint(equalTo:container.bottomAnchor)])
-        let stack=NSStackView(views:[head,scroll]);stack.orientation = .vertical;stack.spacing=10
+        let manual=NSStackView(views:[row([NSView(),add]),scroll]);manual.orientation = .vertical;manual.spacing=8
+        pad(manual,in:bookmarkView)
+        for v in manual.arrangedSubviews {v.widthAnchor.constraint(equalTo:manual.widthAnchor).isActive=true}
+        pad(directory,in:content);pad(bookmarkView,in:content)
+        let stack=NSStackView(views:[head,tabs,content]);stack.orientation = .vertical;stack.spacing=10
         pad(stack,in:view,12)
-        for v in [head,scroll] {v.widthAnchor.constraint(equalTo:stack.widthAnchor).isActive=true}
+        for v in [head,tabs,content] {v.widthAnchor.constraint(equalTo:stack.widthAnchor).isActive=true}
         empty.textColor = .secondaryLabelColor
+        selectTab()
     }
+    func openDirectory(){loadViewIfNeeded();tabs.selectedSegment=0;selectTab()}
+    @objc func selectTab(){directory.isHidden=tabs.selectedSegment != 0;bookmarkView.isHidden=tabs.selectedSegment != 1}
     func show(_ bookmarks:[ReadingBookmark]) {
         loadViewIfNeeded()
         list.arrangedSubviews.forEach{list.removeArrangedSubview($0);$0.removeFromSuperview()}
@@ -96,28 +108,63 @@ final class BookmarkPanel:NSViewController {
 }
 final class BookmarkController:NSObject {
     unowned let reader:Reader
-    let store:BookmarkStore, panel=BookmarkPanel(), popover=NSPopover()
+    let store:BookmarkStore, panel=BookmarkPanel()
     private(set) var items=[ReadingBookmark]()
+    private(set) var outline=[OutlineNode]()
     private var document:String?
+    private var outlineRevision=0
     init(_ reader:Reader) {
         self.reader=reader;store=BookmarkStore(reader.library.base)
         super.init()
-        popover.contentViewController=panel;popover.contentSize=NSSize(width:300,height:350);popover.behavior = .transient
         panel.create={ [weak self] in self?.addCurrent() }
         panel.jump={ [weak self] in self?.reveal($0) }
         panel.remove={ [weak self] in self?.remove($0) }
+        panel.directory.jump={ [weak self] in self?.revealSection($0) }
     }
     func bind() {
-        popover.close();document=reader.entry?.id;reload()
+        document=reader.entry?.id;reload();loadOutline()
     }
     private func reload() {
         do {items=try document.map{try store.read($0)} ?? [];panel.show(items)}
         catch {items=[];panel.show([]);reader.noteError(error)}
     }
-    func toggle(from button:NSButton) {
-        guard reader.entry != nil else{return}
-        if popover.isShown {popover.close();return}
-        reload();popover.show(relativeTo:button.bounds,of:button,preferredEdge:.maxY)
+    func openDirectory() {reload();panel.openDirectory();loadOutline()}
+    private func loadOutline() {
+        outlineRevision += 1
+        let version=outlineRevision,id=document
+        outline=[]
+        if let pdf=reader.pdf,let doc=pdf.document {
+            outline=OutlineNode.pdf(doc)
+            panel.directory.show(outline,message:"此 PDF 未包含文档目录。可在「我的书签」中保存阅读位置。")
+        } else if let md=reader.markdown {
+            panel.directory.show([],message:md.contentReady ? "正在读取目录…":"正在加载文档…")
+            guard md.contentReady else{return}
+            md.web.callAsyncJavaScript("return documentOutline(id)",arguments:["id":md.revision],in:nil,in:.page){ [weak self] result in
+                guard let self,self.document==id,self.outlineRevision==version else{return}
+                guard case let .success(value)=result,let data=try? JSONSerialization.data(withJSONObject:value as Any),
+                      let headings=try? JSONDecoder().decode([WebHeading].self,from:data) else {
+                    self.panel.directory.show([],message:"无法读取文档目录。");return
+                }
+                self.outline=OutlineNode.markdown(headings)
+                self.panel.directory.show(self.outline,message:"此文档没有标题。可在「我的书签」中保存阅读位置。")
+            }
+        } else {panel.directory.show([],message:"打开文档后查看目录。")}
+    }
+    func contentReady(){if reader.markdown != nil {loadOutline()}}
+    func revealSection(_ section:OutlineNode) {
+        guard document==reader.entry?.id else{return}
+        func contains(_ nodes:[OutlineNode])->Bool {nodes.contains{$0 === section || contains($0.children)}}
+        guard contains(outline),let target=section.target else{return}
+        reader.dismissBubble()
+        switch target {
+        case let .pdf(index,point):
+            guard let pdf=reader.pdf,let doc=pdf.document,index>=0,index<doc.pageCount,let page=doc.page(at:index) else{return}
+            pdf.go(to:PDFDestination(page:page,at:point))
+        case let .markdown(start):
+            guard let md=reader.markdown else{return}
+            md.web.callAsyncJavaScript("revealOutline(id,start)",arguments:["id":md.revision,"start":start],in:nil,in:.page){_ in}
+        }
+        if let view=reader.activeTab?.view {reader.window.makeFirstResponder(view)}
     }
     private func insert(_ bookmark:ReadingBookmark,document id:String) {
         guard document==id,reader.entry?.id==id else{return}
@@ -144,7 +191,7 @@ final class BookmarkController:NSObject {
     }
     func reveal(_ id:String) {
         guard let bookmark=items.first(where:{$0.id==id}),document==reader.entry?.id else{return}
-        popover.close();reader.dismissBubble()
+        reader.dismissBubble()
         switch bookmark.destination {
         case let .pdf(position):
             guard let pdf=reader.pdf,let doc=pdf.document,position.page>=0,position.page<doc.pageCount,let page=doc.page(at:position.page) else{return}

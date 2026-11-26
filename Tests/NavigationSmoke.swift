@@ -40,11 +40,20 @@ private enum Failure:Error {case check(String)}
                     ("RNA search across pages.\nAlpha [RNA] on page \(page+1)." as NSString).draw(at:CGPoint(x:60,y:650),withAttributes:[.font:NSFont.systemFont(ofSize:18)])
                     NSGraphicsContext.restoreGraphicsState();context.endPDFPage()
                 }
-                context.closePDF();try data.write(to:pdfURL)
+                context.closePDF()
+                let authored=PDFDocument(data:data as Data)!,root=PDFOutline(),study=PDFOutline(),methods=PDFOutline(),results=PDFOutline()
+                study.label="Study";study.destination=PDFDestination(page:authored.page(at:0)!,at:CGPoint(x:0,y:792))
+                methods.label="Methods";methods.action=PDFActionGoTo(destination:PDFDestination(page:authored.page(at:1)!,at:CGPoint(x:0,y:700)))
+                results.label="Results";results.destination=PDFDestination(page:authored.page(at:2)!,at:CGPoint(x:0,y:700))
+                study.insertChild(methods,at:0);study.insertChild(results,at:1);root.insertChild(study,at:0);authored.outlineRoot=root
+                guard authored.write(to:pdfURL) else{throw Failure.check("PDF fixture write")}
+                let plain=PDFDocument(data:data as Data)!
+                try check(OutlineNode.pdf(plain).isEmpty,"PDF without embedded outline does not fabricate a directory")
                 let mdURL=folder.appendingPathComponent("Search.md")
-                try ("# Search test\n\nRNA search and **RNA** markup.\n\nLiteral [RNA] and中文内容.\n\n"+(0..<24).map{"Paragraph \($0): bookmark position and long reading content.\n\n"}.joined()).write(to:mdURL,atomically:true,encoding:.utf8)
+                try ("# Search test\n\nRNA search and **RNA** markup.\n\nLiteral [RNA] and中文内容.\n\n## Methods\n\n### Details\n\n"+(0..<24).map{"Paragraph \($0): bookmark position and long reading content.\n\n"}.joined()).write(to:mdURL,atomically:true,encoding:.utf8)
                 reader.openFiles([pdfURL,mdURL]);await pause()
                 let pdfTab=reader.activeTab!,pdf=reader.pdf!,doc=pdf.document!
+                try check(reader.outlineVisible && reader.navigationSplit.arrangedSubviews.first === reader.outlineHost && reader.outlineHost.frame.width>=200,"directory sidebar is visible on the left at startup")
                 await key(reader,3,"f",.command)
                 try check(reader.documentSearch.isVisible && reader.documentSearch.bar.field.currentEditor() != nil,"Command + F opens and focuses document search")
                 try await query(reader,"rNa")
@@ -80,15 +89,41 @@ private enum Failure:Error {case check(String)}
                 pdf.go(to:doc.page(at:2)!);await pause();reader.bookmarks.reveal(pdfBookmark.id);await pause()
                 try check(pdf.currentPage===doc.page(at:1),"bookmark jumps back to saved PDF page")
                 try check(try BookmarkStore(library.base).read(pdfTab.entry.id).count==1,"bookmarks survive a fresh store reload")
-                reader.toggleBookmarks();await pause()
-                try check(reader.bookmarks.popover.isShown,"left bookmark button opens a bookmark list")
-                reader.bookmarks.popover.close()
+                reader.setOutlineVisible(true);await pause()
+                try check(reader.outlineVisible && reader.bookmarks.panel.view.isDescendant(of:reader.outlineHost) && reader.bookmarks.panel.tabs.selectedSegment==0,"article directory is embedded in a fixed left sidebar")
+                try check(reader.bookmarks.outline.count==1 && reader.bookmarks.outline[0].children.map(\.title)==["Methods","Results"],"PDF directory preserves native section hierarchy and action destinations")
+                let tree=reader.bookmarks.panel.directory.tree,outlineRoot=reader.bookmarks.outline[0]
+                try check(tree.numberOfRows==3 && tree.level(forItem:outlineRoot.children[0])==1,"outline view displays the expanded chapter hierarchy")
+                tree.collapseItem(outlineRoot)
+                try check(tree.numberOfRows==1,"chapter groups can collapse")
+                tree.expandItem(outlineRoot)
+                try check(tree.numberOfRows==3,"chapter groups can expand again")
+                let pdfSection=reader.bookmarks.outline[0].children[1]
+                let pdfMethods=reader.bookmarks.outline[0].children[0]
+                tree.selectRowIndexes(IndexSet(integer:2),byExtendingSelection:false);await pause()
+                try check(pdf.currentPage===doc.page(at:2) && reader.outlineVisible,"selecting a chapter navigates while keeping the left sidebar visible")
+                reader.bookmarks.revealSection(pdfMethods);await pause()
+                try check(pdf.currentPage===doc.page(at:1),"PDF GoTo action resolves to the correct chapter")
+                reader.setOutlineVisible(true);await pause()
+                reader.bookmarks.panel.tabs.selectedSegment=1;reader.bookmarks.panel.selectTab()
+                try check(reader.bookmarks.panel.directory.isHidden && !reader.bookmarks.panel.add.isHidden,"manual bookmarks are available in the secondary tab")
+                reader.toggleBookmarks();reader.toggleBookmarks();await pause()
+                try check(reader.bookmarks.panel.tabs.selectedSegment==0,"reopening bookmarks returns to the directory")
+                reader.setOutlineVisible(false)
                 reader.showFind();try await query(reader,"RNA")
                 reader.selectTab(reader.tabs[1].entry.id)
                 try await wait("first Markdown visit with open search"){!reader.documentSearch.isSearching && reader.documentSearch.count==3}
                 try check(reader.documentSearch.count==3,"open search resumes after a new Markdown tab finishes loading")
                 try check(reader.bookmarks.items.isEmpty,"bookmarks stay separate for each document")
                 let md=reader.markdown!
+                try await wait("Markdown outline"){reader.bookmarks.outline.first?.children.first?.children.first?.title=="Details"}
+                try check(reader.bookmarks.outline[0].title=="Search test" && reader.bookmarks.outline[0].children[0].title=="Methods","Markdown directory follows heading levels")
+                let markdownSection=reader.bookmarks.outline[0].children[0].children[0]
+                reader.bookmarks.revealSection(pdfSection);await pause()
+                try check(reader.markdown === md,"a stale PDF section cannot navigate another tab")
+                reader.bookmarks.revealSection(markdownSection);await pause()
+                let headingTop=try await md.web.evaluateJavaScript("document.querySelector('h3').getBoundingClientRect().top") as! Double
+                try check(abs(headingTop-40)<3,"Markdown section jumps to the original heading")
                 try await wait("Markdown rendering"){md.rendered}
                 reader.showFind();try await query(reader,"rNa")
                 try check(reader.documentSearch.count==3,"Markdown search includes text inside markup")
@@ -126,7 +161,7 @@ private enum Failure:Error {case check(String)}
                 try check((try BookmarkStore(library.base).read(reader.tabs[1].entry.id)).count==1,"removing a bookmark preserves other documents")
                 try check(reader.window.title.contains("Hy-translator"),"window title uses the new product name")
                 print("NAVIGATION SMOKE OK");fflush(stdout)
-                if CommandLine.arguments.contains("--preview") {retainedReader=reader;reader.documentSearch.bar.field.stringValue="RNA";reader.showFind();reader.bookmarks.addCurrent();reader.toggleBookmarks()}
+                if CommandLine.arguments.contains("--preview") {retainedReader=reader;reader.setOutlineVisible(true)}
                 else {reader.stop();app.terminate(nil)}
             } catch {print("FAIL",error);fflush(stdout);reader.stop();exit(1)}
         }

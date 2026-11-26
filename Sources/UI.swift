@@ -148,6 +148,9 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     var pdf:PDFView? { activeTab?.pdf }
     var markdown:MarkdownPane? { activeTab?.markdown }
     let canvas = NSView(), pageHost = NSView(), split = NSSplitView(), sideHost = NSView()
+    let navigationSplit=NSSplitView(), outlineHost=NSView()
+    private(set) var outlineVisible=true
+    private var outlineWidth:CGFloat=270
     let empty = NSView(), manual=ManualPanel(), bubble=Card(), wordsPanel=WordPanel()
     let notes:ReadingNotes
     lazy var margins=MarginController(self)
@@ -182,7 +185,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         window.registerForDraggedTypes([.fileURL]); window.drop = { [weak self] in self?.openFiles($0) }
         let root=NSView(); window.contentView=root
         let openButton=control("打开","folder","打开 PDF 或 Markdown（⌘O）",self,#selector(choose))
-        bookmarksButton=control("书签","bookmark","添加书签或跳转",self,#selector(toggleBookmarks))
+        bookmarksButton=control("书签","list.bullet.indent","文章目录与我的书签",self,#selector(toggleBookmarks))
         translateButton=control("翻译","text.cursor","独立翻译",self,#selector(toggleTranslation))
         wordsButton=control("收藏","star","收藏词汇",self,#selector(toggleWords))
         notesButton=control("Note","note.text","文献笔记 · Shift＋空格拖动框选",self,#selector(toggleNotes))
@@ -207,8 +210,14 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             self.window.contentView?.layoutSubtreeIfNeeded();self.margins.invalidate()
         }
         let rule=NSBox(); rule.boxType = .separator; root.addSubview(rule); rule.translatesAutoresizingMaskIntoConstraints=false
-        split.isVertical=true; split.dividerStyle = .thin; split.delegate=self; root.addSubview(split); split.translatesAutoresizingMaskIntoConstraints=false
-        NSLayoutConstraint.activate([toolbar.topAnchor.constraint(equalTo:root.topAnchor),toolbar.leadingAnchor.constraint(equalTo:root.leadingAnchor),toolbar.trailingAnchor.constraint(equalTo:root.trailingAnchor),toolbar.heightAnchor.constraint(equalToConstant:50),tabBar.topAnchor.constraint(equalTo:toolbar.bottomAnchor),tabBar.leadingAnchor.constraint(equalTo:root.leadingAnchor),tabBar.trailingAnchor.constraint(equalTo:root.trailingAnchor),tabHeight,rule.topAnchor.constraint(equalTo:findBar.bottomAnchor),rule.leadingAnchor.constraint(equalTo:root.leadingAnchor),rule.trailingAnchor.constraint(equalTo:root.trailingAnchor),split.topAnchor.constraint(equalTo:rule.bottomAnchor),split.bottomAnchor.constraint(equalTo:root.bottomAnchor),split.leadingAnchor.constraint(equalTo:root.leadingAnchor),split.trailingAnchor.constraint(equalTo:root.trailingAnchor)])
+        split.isVertical=true;split.dividerStyle = .thin;split.delegate=self
+        navigationSplit.isVertical=true;navigationSplit.dividerStyle = .thin;navigationSplit.delegate=self
+        root.addSubview(navigationSplit);navigationSplit.translatesAutoresizingMaskIntoConstraints=false
+        outlineHost.frame=NSRect(x:0,y:0,width:outlineWidth,height:600)
+        split.frame=NSRect(x:outlineWidth+1,y:0,width:max(340,root.bounds.width-outlineWidth-1),height:600)
+        navigationSplit.addArrangedSubview(outlineHost);navigationSplit.addArrangedSubview(split)
+        fill(bookmarks.panel.view,in:outlineHost)
+        NSLayoutConstraint.activate([toolbar.topAnchor.constraint(equalTo:root.topAnchor),toolbar.leadingAnchor.constraint(equalTo:root.leadingAnchor),toolbar.trailingAnchor.constraint(equalTo:root.trailingAnchor),toolbar.heightAnchor.constraint(equalToConstant:50),tabBar.topAnchor.constraint(equalTo:toolbar.bottomAnchor),tabBar.leadingAnchor.constraint(equalTo:root.leadingAnchor),tabBar.trailingAnchor.constraint(equalTo:root.trailingAnchor),tabHeight,rule.topAnchor.constraint(equalTo:findBar.bottomAnchor),rule.leadingAnchor.constraint(equalTo:root.leadingAnchor),rule.trailingAnchor.constraint(equalTo:root.trailingAnchor),navigationSplit.topAnchor.constraint(equalTo:rule.bottomAnchor),navigationSplit.bottomAnchor.constraint(equalTo:root.bottomAnchor),navigationSplit.leadingAnchor.constraint(equalTo:root.leadingAnchor),navigationSplit.trailingAnchor.constraint(equalTo:root.trailingAnchor)])
         split.addArrangedSubview(canvas); fill(pageHost,in:canvas)
         canvas.wantsLayer=true; canvas.layer?.backgroundColor=NSColor.windowBackgroundColor.cgColor
         let symbol=NSImageView(image:NSImage(systemSymbolName:"book.pages",accessibilityDescription:nil) ?? NSImage())
@@ -220,6 +229,8 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         empty.addSubview(intro); intro.translatesAutoresizingMaskIntoConstraints=false
         NSLayoutConstraint.activate([intro.centerXAnchor.constraint(equalTo:empty.centerXAnchor),intro.centerYAnchor.constraint(equalTo:empty.centerYAnchor,constant:-14)])
         fill(empty,in:pageHost)
+        root.layoutSubtreeIfNeeded();navigationSplit.setPosition(outlineWidth,ofDividerAt:0)
+        bookmarks.bind();bookmarksButton.contentTintColor=accent
         margins.install(in:root)
         NotificationCenter.default.addObserver(self,selector:#selector(pdfSelection(_:)),name:.PDFViewSelectionChanged,object:nil)
         NotificationCenter.default.addObserver(self,selector:#selector(pdfPageChanged(_:)),name:.PDFViewPageChanged,object:nil)
@@ -394,8 +405,9 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                     self.selected(text,pane.web.convert(rect,to:self.canvas))
                 }
                 pane.onContentReady = { [weak self,weak pane] in
-                    guard let self,let pane,self.markdown === pane,self.documentSearch.isVisible else{return}
-                    self.documentSearch.run()
+                    guard let self,let pane,self.markdown === pane else{return}
+                    self.bookmarks.contentReady()
+                    if self.documentSearch.isVisible {self.documentSearch.run()}
                 }
                 pane.set(text,directory:tab.entry.original.deletingLastPathComponent(),marks:notes.data.marks[tab.entry.id] ?? [])
                 tab.markdown=pane
@@ -458,7 +470,25 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     @objc func showFind(){documentSearch.open()}
     @objc func findNext(){documentSearch.step(1)}
     @objc func findPrevious(){documentSearch.step(-1)}
-    @objc func toggleBookmarks(){bookmarks.toggle(from:bookmarksButton)}
+    @objc func toggleBookmarks(){setOutlineVisible(!outlineVisible)}
+    func setOutlineVisible(_ visible:Bool) {
+        guard visible != outlineVisible else{return}
+        if outlineVisible {outlineWidth=outlineHost.frame.width}
+        outlineVisible=visible
+        if visible {
+            ensureReaderWidth()
+            outlineHost.frame=NSRect(x:0,y:0,width:outlineWidth,height:navigationSplit.bounds.height)
+            navigationSplit.insertArrangedSubview(outlineHost,at:0)
+            navigationSplit.setPosition(outlineWidth,ofDividerAt:0);bookmarks.openDirectory()
+        } else {navigationSplit.removeArrangedSubview(outlineHost);outlineHost.removeFromSuperview();ensureReaderWidth()}
+        bookmarksButton.contentTintColor=visible ? accent:nil
+        navigationSplit.adjustSubviews();margins.invalidate()
+    }
+    private func ensureReaderWidth() {
+        let minimum:CGFloat=outlineVisible && side != .none ? max(900,outlineHost.frame.width+617):740
+        window.minSize=NSSize(width:minimum,height:440)
+        if window.frame.width<minimum {var frame=window.frame;frame.size.width=minimum;window.setFrame(frame,display:true)}
+    }
     func selected(_ raw:String,_ rect:NSRect) {
         let text=raw.replacingOccurrences(of:"\\s+",with:" ",options:.regularExpression).trimmingCharacters(in:.whitespacesAndNewlines)
         guard text.rangeOfCharacter(from:.letters) != nil,
@@ -545,7 +575,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     @objc func toggleTerminal() { setSide(side == .terminal ? .none : .terminal) }
     func setSide(_ next:Side) {
         if side != .none && sideHost.frame.width>=240 { sidebarWidth=sideHost.frame.width }
-        side=next; sideHost.subviews.forEach{$0.removeFromSuperview()}
+        side=next;ensureReaderWidth();sideHost.subviews.forEach{$0.removeFromSuperview()}
         if next == .none {
             if sideHost.superview != nil { split.removeArrangedSubview(sideHost); sideHost.removeFromSuperview() }
         } else {
@@ -579,13 +609,18 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         margins.invalidate()
         if bubble.superview != nil {placeBubble()}
     }
-    func splitView(_ splitView:NSSplitView,constrainMinCoordinate proposedMinimumPosition:CGFloat,ofSubviewAt offset:Int)->CGFloat { max(340,splitView.bounds.width-720) }
-    func splitView(_ splitView:NSSplitView,constrainMaxCoordinate proposedMaximumPosition:CGFloat,ofSubviewAt offset:Int)->CGFloat { splitView.bounds.width-275 }
-    func splitView(_ splitView:NSSplitView,shouldAdjustSizeOfSubview view:NSView)->Bool { view === canvas }
+    func splitView(_ splitView:NSSplitView,constrainMinCoordinate proposedMinimumPosition:CGFloat,ofSubviewAt offset:Int)->CGFloat {
+        splitView === navigationSplit ? 200:max(340,splitView.bounds.width-720)
+    }
+    func splitView(_ splitView:NSSplitView,constrainMaxCoordinate proposedMaximumPosition:CGFloat,ofSubviewAt offset:Int)->CGFloat {
+        splitView === navigationSplit ? min(420,splitView.bounds.width-(side == .none ? 340:616)):splitView.bounds.width-275
+    }
+    func splitView(_ splitView:NSSplitView,shouldAdjustSizeOfSubview view:NSView)->Bool {splitView === navigationSplit ? view === split:view === canvas}
+    func splitViewDidResizeSubviews(_ notification:Notification) {margins.invalidate()}
     func windowDidResize(_ notification:Notification) { margins.invalidate(); if bubble.superview != nil { placeBubble() } }
     func windowDidResignKey(_ notification:Notification) {margins.cancelGesture()}
     func stop() {
-        documentSearch.cancel();bookmarks.popover.close()
+        documentSearch.cancel()
         margins.detach()
         if let keyMonitor {NSEvent.removeMonitor(keyMonitor); self.keyMonitor=nil}
         saveSession(); saveDraft(); pending?.cancel(); engine.stop(); terminal?.stop()
