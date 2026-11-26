@@ -15,10 +15,10 @@ final class App: NSObject, NSApplicationDelegate {
         func add(_ menu:NSMenu,_ name:String,_ action:Selector,_ key:String,_ target:AnyObject?) {
             let item=menu.addItem(withTitle:name,action:action,keyEquivalent:key); item.target=target
         }
-        let app=submenu("文译阅读器")
-        add(app,"关于文译阅读器",#selector(NSApplication.orderFrontStandardAboutPanel(_:)),"",NSApp)
-        app.addItem(.separator()); add(app,"隐藏文译阅读器",#selector(NSApplication.hide(_:)),"h",NSApp)
-        add(app,"退出文译阅读器",#selector(NSApplication.terminate(_:)),"q",NSApp)
+        let app=submenu("Hy-translator")
+        add(app,"关于Hy-translator",#selector(NSApplication.orderFrontStandardAboutPanel(_:)),"",NSApp)
+        app.addItem(.separator()); add(app,"隐藏Hy-translator",#selector(NSApplication.hide(_:)),"h",NSApp)
+        add(app,"退出Hy-translator",#selector(NSApplication.terminate(_:)),"q",NSApp)
         let file=submenu("文件"); add(file,"打开…",#selector(Reader.choose),"o",reader)
         add(file,"在新标签页中打开…",#selector(Reader.choose),"t",reader)
         let recent=NSMenuItem(title:"最近打开",action:nil,keyEquivalent:""); recent.submenu=recents; file.addItem(recent)
@@ -28,7 +28,13 @@ final class App: NSObject, NSApplicationDelegate {
         let edit=submenu("编辑")
         add(edit,"剪切",#selector(NSText.cut(_:)),"x",nil); add(edit,"复制",#selector(NSText.copy(_:)),"c",nil); add(edit,"粘贴",#selector(NSText.paste(_:)),"v",nil)
         add(edit,"全选",#selector(NSText.selectAll(_:)),"a",nil)
+        edit.addItem(.separator())
+        add(edit,"搜索当前文档…",#selector(Reader.showFind),"f",reader)
+        add(edit,"下一个搜索结果",#selector(Reader.findNext),"g",reader)
+        let previousMatch=edit.addItem(withTitle:"上一个搜索结果",action:#selector(Reader.findPrevious),keyEquivalent:"g")
+        previousMatch.keyEquivalentModifierMask=[.command,.shift];previousMatch.target=reader
         let view=submenu("显示")
+        add(view,"书签",#selector(Reader.toggleBookmarks),"",reader)
         add(view,"独立翻译",#selector(Reader.toggleTranslation),"",reader)
         add(view,"收藏词汇",#selector(Reader.toggleWords),"",reader)
         add(view,"Note 笔记",#selector(Reader.toggleNotes),"",reader)

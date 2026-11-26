@@ -15,6 +15,19 @@ struct PagePosition: Codable {
         scale = view.scaleFactor
         fitsWidth = view.autoScales
     }
+    init?(bookmarking view:PDFView) {
+        guard let document=view.document,let page=view.currentPage,view.scaleFactor>0 else{return nil}
+        self.page=document.index(for:page)
+        // currentDestination may still refer to the preceding page at a page break.
+        if let destination=view.currentDestination,destination.page === page,
+           destination.point.x.isFinite,destination.point.y.isFinite {point=destination.point}
+        else {
+            let visible=view.convert(view.bounds,to:page).intersection(page.bounds(for:view.displayBox))
+            guard !visible.isEmpty,!visible.isNull else{return nil}
+            point=CGPoint(x:visible.minX,y:visible.maxY)
+        }
+        scale=view.scaleFactor;fitsWidth=view.autoScales
+    }
 }
 
 struct SavedTab: Codable {

@@ -95,6 +95,7 @@ final class Library {
     let base: URL
     private(set) var entries: [DocumentEntry] = []
     init(root:URL? = nil) {
+        // Preserve the existing library, notes and drafts across the product rename.
         base = root ?? FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("文译阅读器",isDirectory:true)
         if let d = try? Data(contentsOf:base.appendingPathComponent("library.json")) {
             entries = (try? JSONDecoder().decode([DocumentEntry].self,from:d)) ?? []
@@ -150,11 +151,14 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     let empty = NSView(), manual=ManualPanel(), bubble=Card(), wordsPanel=WordPanel()
     let notes:ReadingNotes
     lazy var margins=MarginController(self)
+    lazy var bookmarks=BookmarkController(self)
+    lazy var documentSearch=DocumentSearch(self)
+    private var findHeight:NSLayoutConstraint!
     var pendingWords=Set<String>(), wordErrors=[String:String]()
     private var draggedTop:NSPoint?
     let metadata = label("",11)
     let engine = Translator()
-    private var translateButton: NSButton!, terminalButton: NSButton!, wordsButton:NSButton!, notesButton:NSButton!
+    private var translateButton: NSButton!, terminalButton: NSButton!, wordsButton:NSButton!, notesButton:NSButton!, bookmarksButton:NSButton!
     private(set) var terminal: TerminalPane?
     private(set) var side: Side = .none
     private(set) var source = "", result = "", busy = false, failed = false
@@ -172,18 +176,19 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         self.library = library; notes=ReadingNotes(base:library.base)
         window = DropWindow(contentRect:NSRect(x:0,y:0,width:1100,height:730),styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
         super.init()
-        window.title = "文译阅读器"; window.minSize = NSSize(width:740,height:440)
+        window.title = "Hy-translator"; window.minSize = NSSize(width:740,height:440)
         window.isReleasedWhenClosed=false; window.delegate=self
         window.setFrameAutosaveName("WenyiMain"); if window.frame.origin == .zero { window.center() }
         window.registerForDraggedTypes([.fileURL]); window.drop = { [weak self] in self?.openFiles($0) }
         let root=NSView(); window.contentView=root
         let openButton=control("打开","folder","打开 PDF 或 Markdown（⌘O）",self,#selector(choose))
+        bookmarksButton=control("书签","bookmark","添加书签或跳转",self,#selector(toggleBookmarks))
         translateButton=control("翻译","text.cursor","独立翻译",self,#selector(toggleTranslation))
         wordsButton=control("收藏","star","收藏词汇",self,#selector(toggleWords))
         notesButton=control("Note","note.text","文献笔记 · Shift＋空格拖动框选",self,#selector(toggleNotes))
         terminalButton=control("终端","terminal","右侧终端（⌃\u{60}）",self,#selector(toggleTerminal))
         metadata.textColor = .secondaryLabelColor
-        let toolbar=row([openButton,metadata,NSView(),translateButton,wordsButton,notesButton,terminalButton],spacing:12)
+        let toolbar=row([openButton,bookmarksButton,metadata,NSView(),translateButton,wordsButton,notesButton,terminalButton],spacing:10)
         toolbar.edgeInsets=NSEdgeInsets(top:0,left:14,bottom:0,right:14)
         toolbar.translatesAutoresizingMaskIntoConstraints=false; root.addSubview(toolbar)
         tabBar.translatesAutoresizingMaskIntoConstraints=false; root.addSubview(tabBar)
@@ -192,9 +197,18 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         tabBar.add = { [weak self] in self?.choose() }
         tabHeight=tabBar.heightAnchor.constraint(equalToConstant:0)
         tabBar.isHidden=true
+        let findBar=documentSearch.bar
+        findBar.translatesAutoresizingMaskIntoConstraints=false;root.addSubview(findBar);findBar.isHidden=true
+        findHeight=findBar.heightAnchor.constraint(equalToConstant:0)
+        NSLayoutConstraint.activate([findBar.topAnchor.constraint(equalTo:tabBar.bottomAnchor),findBar.leadingAnchor.constraint(equalTo:root.leadingAnchor),findBar.trailingAnchor.constraint(equalTo:root.trailingAnchor),findHeight])
+        documentSearch.visibility={ [weak self] visible in
+            guard let self else{return}
+            self.findHeight.constant=visible ? 42:0;self.documentSearch.bar.isHidden = !visible
+            self.window.contentView?.layoutSubtreeIfNeeded();self.margins.invalidate()
+        }
         let rule=NSBox(); rule.boxType = .separator; root.addSubview(rule); rule.translatesAutoresizingMaskIntoConstraints=false
         split.isVertical=true; split.dividerStyle = .thin; split.delegate=self; root.addSubview(split); split.translatesAutoresizingMaskIntoConstraints=false
-        NSLayoutConstraint.activate([toolbar.topAnchor.constraint(equalTo:root.topAnchor),toolbar.leadingAnchor.constraint(equalTo:root.leadingAnchor),toolbar.trailingAnchor.constraint(equalTo:root.trailingAnchor),toolbar.heightAnchor.constraint(equalToConstant:50),tabBar.topAnchor.constraint(equalTo:toolbar.bottomAnchor),tabBar.leadingAnchor.constraint(equalTo:root.leadingAnchor),tabBar.trailingAnchor.constraint(equalTo:root.trailingAnchor),tabHeight,rule.topAnchor.constraint(equalTo:tabBar.bottomAnchor),rule.leadingAnchor.constraint(equalTo:root.leadingAnchor),rule.trailingAnchor.constraint(equalTo:root.trailingAnchor),split.topAnchor.constraint(equalTo:rule.bottomAnchor),split.bottomAnchor.constraint(equalTo:root.bottomAnchor),split.leadingAnchor.constraint(equalTo:root.leadingAnchor),split.trailingAnchor.constraint(equalTo:root.trailingAnchor)])
+        NSLayoutConstraint.activate([toolbar.topAnchor.constraint(equalTo:root.topAnchor),toolbar.leadingAnchor.constraint(equalTo:root.leadingAnchor),toolbar.trailingAnchor.constraint(equalTo:root.trailingAnchor),toolbar.heightAnchor.constraint(equalToConstant:50),tabBar.topAnchor.constraint(equalTo:toolbar.bottomAnchor),tabBar.leadingAnchor.constraint(equalTo:root.leadingAnchor),tabBar.trailingAnchor.constraint(equalTo:root.trailingAnchor),tabHeight,rule.topAnchor.constraint(equalTo:findBar.bottomAnchor),rule.leadingAnchor.constraint(equalTo:root.leadingAnchor),rule.trailingAnchor.constraint(equalTo:root.trailingAnchor),split.topAnchor.constraint(equalTo:rule.bottomAnchor),split.bottomAnchor.constraint(equalTo:root.bottomAnchor),split.leadingAnchor.constraint(equalTo:root.leadingAnchor),split.trailingAnchor.constraint(equalTo:root.trailingAnchor)])
         split.addArrangedSubview(canvas); fill(pageHost,in:canvas)
         canvas.wantsLayer=true; canvas.layer?.backgroundColor=NSColor.windowBackgroundColor.cgColor
         let symbol=NSImageView(image:NSImage(systemSymbolName:"book.pages",accessibilityDescription:nil) ?? NSImage())
@@ -229,6 +243,13 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         wordsPanel.retry = { [weak self] in self?.completeWord($0) }
         keyMonitor=NSEvent.addLocalMonitorForEvents(matching:[.keyDown,.keyUp,.flagsChanged,.leftMouseDown,.leftMouseDragged,.leftMouseUp,.rightMouseDown]) { [weak self] e in
             guard let r=self, e.window === r.window else { return e }
+            if e.type == .keyDown {
+                let flags=e.modifierFlags.intersection([.command,.control,.option,.shift])
+                let documentFocused=(r.window.firstResponder as? NSView).map{view in r.activeTab?.view.map{view.isDescendant(of:$0)} ?? false} ?? false
+                if e.keyCode==3 && (flags == .command || (flags == .control && documentFocused)) {r.showFind();return nil}
+                if e.keyCode==5 && flags.contains(.command) && flags.intersection([.control,.option]).isEmpty {r.documentSearch.step(flags.contains(.shift) ? -1:1);return nil}
+                if e.keyCode==53 && r.documentSearch.isVisible {r.documentSearch.close();return nil}
+            }
             if r.margins.handle(e) {return nil}
             if (e.type == .rightMouseDown || (e.type == .leftMouseDown && e.modifierFlags.contains(.control))) && r.popupSelection(e) {return nil}
             if e.type == .keyDown && e.keyCode==48 && e.modifierFlags.contains(.control) && !r.tabs.isEmpty {
@@ -352,8 +373,8 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             let next=min(index,tabs.count-1)
             do {try activate(tabs[next]); return} catch {tabs.remove(at:next)}
         }
-        clear(); activeTab=nil; draggedTop=nil; margins.bind()
-        empty.isHidden=false; metadata.stringValue=""; window.title="文译阅读器"
+        clear(); activeTab=nil; draggedTop=nil; margins.bind();bookmarks.bind();documentSearch.bind()
+        empty.isHidden=false; metadata.stringValue=""; window.title="Hy-translator"
     }
     private func activate(_ tab:ReadingTab) throws {
         if activeTab === tab {return}
@@ -372,6 +393,10 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
                     guard let self,let pane,self.markdown === pane else {return}
                     self.selected(text,pane.web.convert(rect,to:self.canvas))
                 }
+                pane.onContentReady = { [weak self,weak pane] in
+                    guard let self,let pane,self.markdown === pane,self.documentSearch.isVisible else{return}
+                    self.documentSearch.run()
+                }
                 pane.set(text,directory:tab.entry.original.deletingLastPathComponent(),marks:notes.data.marks[tab.entry.id] ?? [])
                 tab.markdown=pane
             }
@@ -382,6 +407,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         translatedRanges=[]
         if bubble.superview == nil { draggedTop=nil }
         margins.detach()
+        documentSearch.cancel()
         activeTab?.view?.isHidden=true; empty.isHidden=true; activeTab=tab
         let view=tab.view!
         if firstVisit {fill(view,in:pageHost)}
@@ -402,9 +428,10 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
             }
             updatePageLabel()
         } else {metadata.stringValue="Markdown"}
-        window.title=tab.entry.name+" · 文译阅读器"
+        window.title=tab.entry.name+" · Hy-translator"
         window.makeFirstResponder(view)
         margins.bind()
+        bookmarks.bind();documentSearch.bind()
     }
     private func problem(_ msg:String)->NSError { NSError(domain:"Wenyi",code:1,userInfo:[NSLocalizedDescriptionKey:msg]) }
     private func alert(_ message:String) { let a=NSAlert(); a.messageText="无法打开文献"; a.informativeText=message; a.beginSheetModal(for:window) }
@@ -428,6 +455,10 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
         guard let page=line.pages.last else { return }
         let r=pdf.convert(line.bounds(for:page),from:page); selected(text,pdf.convert(r,to:canvas))
     }
+    @objc func showFind(){documentSearch.open()}
+    @objc func findNext(){documentSearch.step(1)}
+    @objc func findPrevious(){documentSearch.step(-1)}
+    @objc func toggleBookmarks(){bookmarks.toggle(from:bookmarksButton)}
     func selected(_ raw:String,_ rect:NSRect) {
         let text=raw.replacingOccurrences(of:"\\s+",with:" ",options:.regularExpression).trimmingCharacters(in:.whitespacesAndNewlines)
         guard text.rangeOfCharacter(from:.letters) != nil,
@@ -554,6 +585,7 @@ final class Reader: NSObject, NSWindowDelegate, NSSplitViewDelegate {
     func windowDidResize(_ notification:Notification) { margins.invalidate(); if bubble.superview != nil { placeBubble() } }
     func windowDidResignKey(_ notification:Notification) {margins.cancelGesture()}
     func stop() {
+        documentSearch.cancel();bookmarks.popover.close()
         margins.detach()
         if let keyMonitor {NSEvent.removeMonitor(keyMonitor); self.keyMonitor=nil}
         saveSession(); saveDraft(); pending?.cancel(); engine.stop(); terminal?.stop()

@@ -1,6 +1,6 @@
 let documentID = "";
 function renderPaper(text, id, marks) {
-  documentID = id; marginSpec={notes:[],regions:[]};
+  documentID = id; marginSpec={notes:[],regions:[]};findQuery="";findIndex=-1;
   const fragment = DOMPurify.sanitize(marked.parse(text), {
     RETURN_DOM_FRAGMENT: true, ALLOW_DATA_ATTR: false, USE_PROFILES: {html:true},
     FORBID_TAGS: ['form','input','button','video','audio','style','base','meta','link'],
@@ -66,6 +66,7 @@ function applyMarks(id,marks) {
     }
     pos=end;
   }
+  if(typeof refreshDocumentSearch==='function')refreshDocumentSearch();
   if(selected) {
     const r=document.createRange(), start=selected.start, end=start+selected.length;
     let i=0,found=false;

@@ -68,4 +68,4 @@ if __name__ == "__main__":
         install(args.model.resolve(), args.archive.resolve(), Path.home() / ".local/share/hy-mt2-7b")
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, str(error) + "\n")
-    print("Hy-MT2-7B is ready. Open 文译阅读器.app and select English text to translate.")
+    print("Hy-MT2-7B is ready. Open Hy-translator.app and select English text to translate.")

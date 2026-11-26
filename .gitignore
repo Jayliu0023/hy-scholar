@@ -5,3 +5,4 @@ __pycache__/
 *.gguf
 *.zip
 build/
+work/

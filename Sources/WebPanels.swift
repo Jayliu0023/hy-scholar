@@ -54,6 +54,8 @@ final class MarkdownPane {
     private var marks:[TextMark]=[]
     var notebook=Notebook(), geometry=WebNoteGeometry()
     var onGeometry:(()->Void)?
+    var onContentReady:(()->Void)?
+    private(set) var contentReady=false
     private(set) var rendered = false
     private var text = ""
     private(set) var revision = UUID().uuidString
@@ -80,7 +82,7 @@ final class MarkdownPane {
         web.loadFileURL(resources.appendingPathComponent(nav.page), allowingReadAccessTo: resources)
     }
     func set(_ content: String, directory: URL, marks:[TextMark]) {
-        excerpt=nil; geometry=WebNoteGeometry(); self.marks=marks
+        excerpt=nil; contentReady=false; geometry=WebNoteGeometry(); self.marks=marks
         revision = UUID().uuidString; text = content; images.directory = directory; render()
     }
     private var markData:[[String:Any]] { marks.map { ["kind":$0.kind.rawValue,"span":["start":$0.span.start,"length":$0.span.length]] } }
@@ -90,7 +92,11 @@ final class MarkdownPane {
     }
     private func render() {
         guard rendered else { return }
-        web.callAsyncJavaScript("renderPaper(text,id,marks)", arguments:["text":text,"id":revision,"marks":markData], in:nil, in:.page) { [weak self] _ in self?.pushNotebook() }
+        let id=revision
+        web.callAsyncJavaScript("renderPaper(text,id,marks)", arguments:["text":text,"id":id,"marks":markData], in:nil, in:.page) { [weak self] result in
+            guard let self,self.revision==id,case .success=result else{return}
+            self.contentReady=true;self.pushNotebook();self.onContentReady?()
+        }
     }
 }
 
